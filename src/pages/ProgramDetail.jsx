@@ -16,7 +16,6 @@ const TIMELINE = [
   { phase: "PRE_SEASON", label: "Pré-época" },
   { phase: "PLANTING", label: "Sementeira" },
   { phase: "FERTILIZATION", label: "Adubação" },
-  { phase: "ALERTS", label: "Alertas" },
   { phase: "HARVEST", label: "Colheita" },
   { phase: "FEEDBACK", label: "Feedback" },
   { phase: "COMPLETED", label: "Concluído" },
@@ -30,10 +29,50 @@ const PHASE_ACTIONS = {
   PRE_SEASON: ["SEMEEI"],
   PLANTING: ["SEMEEI"],
   FERTILIZATION: ["ADUBEI"],
-  ALERTS: [],
   HARVEST: ["15 sacos", "20 sacos"],
   FEEDBACK: ["15 sacos", "20 sacos"],
   COMPLETED: [],
+};
+
+// What the engine actually does at each phase (EvaluateProgramTriggersUseCase._evaluate_phase).
+// Kept in one place so the demo narrative never says more than the code does.
+const PHASE_DETAILS = {
+  PRE_SEASON: {
+    recommendation:
+      "A aguardar a janela de sementeira. O motor compara a precipitação acumulada dos últimos 5 dias com o limiar da cultura e região, e a probabilidade de chuva prevista para 7 dias. Quando a janela abre, envia \"SEMEAR AGORA\" com o nível de confiança calculado.",
+    climate:
+      "Precipitação acumulada (5 dias) e probabilidade de chuva a 7 dias — ver painel climático abaixo.",
+    yield: "Sem colheita nesta fase. O rendimento é reportado pelo agricultor após a colheita, por SMS.",
+  },
+  PLANTING: {
+    recommendation:
+      "Sementeira confirmada. O motor verifica diariamente a precipitação observada e prevista para detetar seca prolongada ou chuva intensa, e envia um alerta SMS se alguma condição for acionada.",
+    climate: "Precipitação diária observada + previsão a 7 dias, para deteção de seca ou chuva intensa.",
+    yield: "Sem colheita nesta fase. O rendimento é reportado pelo agricultor após a colheita, por SMS.",
+  },
+  FERTILIZATION: {
+    recommendation:
+      "Recomendação de adubação com base nos dias desde a sementeira, na previsão de chuva a 5 dias e na área da machamba. O motor continua a monitorizar seca e chuva intensa, e avança automaticamente para Colheita ao atingir a maturidade da cultura.",
+    climate: "Precipitação diária + previsão a 5 dias, usadas para o momento recomendado de adubação e para alertas de seca/chuva intensa.",
+    yield: "Sem colheita nesta fase. O rendimento é reportado pelo agricultor após a colheita, por SMS.",
+  },
+  HARVEST: {
+    recommendation:
+      "O motor identifica a janela de colheita: 5 ou mais dias secos (<5mm) nos próximos 10 dias de previsão acionam \"Bom momento para colher\".",
+    climate: "Previsão a 10 dias, para contar dias secos consecutivos.",
+    yield: "A aguardar a colheita. Assim que terminar, o agricultor reporta os sacos colhidos por SMS ou USSD.",
+  },
+  FEEDBACK: {
+    recommendation:
+      "O motor pede ao agricultor quantos sacos colheu, por SMS (uma única vez por programa).",
+    climate: "Sem monitorização climática nesta fase — a época de crescimento terminou.",
+    yield: "A aguardar a resposta do agricultor (ex.: \"15 sacos\") para fechar o programa.",
+  },
+  COMPLETED: {
+    recommendation: "Programa concluído. Sem mais ações do motor climático.",
+    climate: "Sem monitorização climática — programa encerrado.",
+    yield: "Rendimento confirmado pelo agricultor — ver o resumo abaixo.",
+  },
 };
 
 export default function ProgramDetail() {
@@ -148,6 +187,7 @@ export default function ProgramDetail() {
   if (program === null) return <LoadingSpinner />;
 
   const currentIndex = TIMELINE.findIndex((step) => step.phase === program.current_phase);
+  const phaseDetail = PHASE_DETAILS[program.current_phase] ?? PHASE_DETAILS.PRE_SEASON;
 
   return (
     <div className="flex flex-col gap-6">
@@ -185,7 +225,30 @@ export default function ProgramDetail() {
 
       <div className="card bg-base-100 shadow-sm">
         <div className="card-body">
-          <h2 className="card-title text-base">Painel Climático</h2>
+          <h2 className="card-title text-base">
+            Detalhe da fase — {TIMELINE.find((s) => s.phase === program.current_phase)?.label ?? program.current_phase}
+          </h2>
+          <div className="grid grid-cols-1 gap-4 mt-1">
+            <div>
+              <p className="text-sm font-semibold text-base-content/70">Recomendação do sistema</p>
+              <p className="text-sm">{phaseDetail.recommendation}</p>
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-base-content/70">Acompanhamento climático</p>
+              <p className="text-sm">{phaseDetail.climate}</p>
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-base-content/70">Rendimento previsto</p>
+              <p className="text-sm">{phaseDetail.yield}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {(program.current_phase === "PRE_SEASON" || program.current_phase === "PLANTING") && (
+      <div className="card bg-base-100 shadow-sm">
+        <div className="card-body">
+          <h2 className="card-title text-base">Painel Climático — Janela de Sementeira</h2>
           {program.machamba_location_lat === null || program.machamba_location_lon === null ? (
             <p className="text-base-content/60">
               Sem coordenadas GPS — dados climáticos não disponíveis para esta
@@ -220,6 +283,31 @@ export default function ProgramDetail() {
           )}
         </div>
       </div>
+      )}
+
+      {program.reported_yield_sacks !== null && (
+        <div className="card bg-base-100 shadow-sm">
+          <div className="card-body">
+            <h2 className="card-title text-base">Rendimento</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm text-base-content/60">Sacos colhidos (auto-reportado)</p>
+                <p className="font-semibold">{program.reported_yield_sacks} sacos</p>
+              </div>
+              <div>
+                <p className="text-sm text-base-content/60">Rendimento por hectare</p>
+                <p className="font-semibold">
+                  {(program.reported_yield_sacks / program.machamba_area_ha).toFixed(1)}{" "}
+                  sacos/ha
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-base-content/40 mt-1">
+              Valor auto-reportado pelo agricultor por SMS/USSD ao fim da colheita.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="card bg-base-100 shadow-sm">
         <div className="card-body">
@@ -300,6 +388,11 @@ export default function ProgramDetail() {
       <div className="card bg-base-100 shadow-sm">
         <div className="card-body">
           <h2 className="card-title text-base">Histórico de Mensagens</h2>
+          <p className="text-xs text-base-content/50">
+            Inclui as recomendações que o motor climático gera para esta fase —
+            mesmo quando ainda em simulação, sem envio real de SMS (ver
+            selo "simulação" abaixo).
+          </p>
           {messages.length === 0 ? (
             <p className="text-base-content/60">
               Ainda não foram trocadas mensagens neste programa.
@@ -313,6 +406,11 @@ export default function ProgramDetail() {
                 >
                   <div className="chat-header">
                     {message.direction === "out" ? "Ephula" : "Agricultor"}
+                    {message.status === "simulated" && (
+                      <span className="badge badge-xs badge-warning ml-1">
+                        simulação
+                      </span>
+                    )}
                   </div>
                   <div
                     className={`chat-bubble ${
